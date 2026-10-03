@@ -362,7 +362,9 @@ pub struct ContainerAction {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProvisionResource {
     pub resource_id: Uuid,
-    pub kind: String,
+    /// e.g. `postgres18`. Must not be named `kind`: that is the tag of
+    /// [`CommandKind`] and the two would collide on the wire.
+    pub resource_type: String,
     pub name: String,
     pub image: String,
     pub container_name: String,
@@ -729,5 +731,65 @@ mod tests {
         }
         let bytes = rmp_serde::to_vec_named(&Bogus { t: "nope" }).unwrap();
         assert!(rmp_serde::from_slice::<AgentMessage>(&bytes).is_err());
+    }
+
+    /// Every command variant must survive the wire. Internally tagged enums
+    /// break silently when a payload field reuses the tag name.
+    #[test]
+    fn every_command_kind_roundtrips() {
+        let (mut agent, mut hub) = pair();
+        let kinds = vec![
+            CommandKind::DeployCompose(Box::new(deploy())),
+            CommandKind::RollbackCompose(RollbackCompose {
+                release_id: id(),
+                service_id: id(),
+                project_name: "p".into(),
+                service_name: "s".into(),
+                compose_dir: "/d".into(),
+            }),
+            CommandKind::StopService(StopService {
+                compose_dir: Some("/d".into()),
+                container_name: None,
+            }),
+            CommandKind::Scale(Scale {
+                project_name: "p".into(),
+                service_name: "s".into(),
+                compose_dir: "/d".into(),
+                replicas: 2,
+            }),
+            CommandKind::ContainerAction(ContainerAction {
+                container_id: "c".into(),
+                action: ContainerActionKind::Remove,
+            }),
+            CommandKind::ProvisionResource(ProvisionResource {
+                resource_id: id(),
+                resource_type: "postgres18".into(),
+                name: "db".into(),
+                image: "postgres:18".into(),
+                container_name: "resource_db".into(),
+                env: vec!["A=1".into()],
+            }),
+            CommandKind::RunBackup(RunBackup {
+                backup_id: id(),
+                resource_id: id(),
+                backup_type: "pg_dump".into(),
+                container_name: "resource_db".into(),
+            }),
+            CommandKind::PullImage(PullImage {
+                image: "x:1".into(),
+            }),
+            CommandKind::ScanUnmanaged,
+        ];
+        for kind in kinds {
+            let msg = HubMessage::Command(Box::new(Command {
+                id: id(),
+                idempotency_key: "k".into(),
+                deadline_ms: None,
+                command: kind,
+            }));
+            let frame = hub.seal_message(&msg).unwrap();
+            let got: HubMessage = agent.open_message(&frame).unwrap();
+            assert_eq!(got, msg);
+        }
     }
 }
