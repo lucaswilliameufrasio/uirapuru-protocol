@@ -2,6 +2,7 @@
 //!
 //! See `uirapuru-backend/docs/agent-stream-protocol.md` for the design.
 
+pub mod enrollment;
 pub mod error;
 pub mod handshake;
 pub mod messages;
