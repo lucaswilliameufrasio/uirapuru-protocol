@@ -376,6 +376,8 @@ pub struct RunBackup {
     pub resource_id: Uuid,
     /// e.g. `pg_dump`.
     pub backup_type: String,
+    /// Container that holds the data (`resource_<name>`).
+    pub container_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
