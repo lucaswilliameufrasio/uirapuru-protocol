@@ -267,9 +267,10 @@ pub enum AgentMessage {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CipheraAccess {
     pub url: String,
-    /// Short-lived, read-only, scoped to one project and environment.
+    /// Short-lived, read-only, scoped to one project, environment and key prefix.
     pub service_token: String,
-    pub project: String,
+    /// Ciphera project id (UUID).
+    pub project_id: String,
     pub environment: String,
 }
 
@@ -278,7 +279,7 @@ impl fmt::Debug for CipheraAccess {
         f.debug_struct("CipheraAccess")
             .field("url", &self.url)
             .field("service_token", &"<redacted>")
-            .field("project", &self.project)
+            .field("project_id", &self.project_id)
             .field("environment", &self.environment)
             .finish()
     }
@@ -295,8 +296,22 @@ pub enum DeliveryMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecureVar {
+    /// Variable name inside the container.
     pub name: String,
+    /// Secret key in Ciphera (includes the service's key prefix).
+    pub key: String,
     pub mode: DeliveryMode,
+    /// Pin to this Ciphera version (used by rollbacks); `None` = current.
+    #[serde(default)]
+    pub version: Option<u32>,
+}
+
+/// Where the agent fetches `secure` variables from. The values never pass
+/// through the hub.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SecretsSpec {
+    pub ciphera: CipheraAccess,
+    pub vars: Vec<SecureVar>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -314,8 +329,7 @@ pub struct DeployCompose {
     pub env_plain: BTreeMap<String, String>,
     /// `secure` variables fetched by the agent straight from Ciphera.
     #[serde(default)]
-    pub secure_vars: Vec<SecureVar>,
-    pub ciphera: Option<CipheraAccess>,
+    pub secrets: Option<SecretsSpec>,
     pub replicas: Option<u32>,
 }
 
@@ -326,6 +340,10 @@ pub struct RollbackCompose {
     pub project_name: String,
     pub service_name: String,
     pub compose_dir: String,
+    #[serde(default)]
+    pub env_plain: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secrets: Option<SecretsSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -342,6 +360,12 @@ pub struct Scale {
     pub service_name: String,
     pub compose_dir: String,
     pub replicas: u32,
+    /// New replicas are created from the compose file, so they need the same
+    /// variables as the running ones.
+    #[serde(default)]
+    pub env_plain: BTreeMap<String, String>,
+    #[serde(default)]
+    pub secrets: Option<SecretsSpec>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -471,6 +495,31 @@ mod tests {
         Uuid::now_v7()
     }
 
+    fn secrets() -> SecretsSpec {
+        SecretsSpec {
+            ciphera: CipheraAccess {
+                url: "https://ciphera.example".into(),
+                service_token: "st_super_secret".into(),
+                project_id: "3f1c0f0e-0000-0000-0000-000000000001".into(),
+                environment: "production".into(),
+            },
+            vars: vec![
+                SecureVar {
+                    name: "DATABASE_URL".into(),
+                    key: "WEB__DATABASE_URL".into(),
+                    mode: DeliveryMode::Env,
+                    version: None,
+                },
+                SecureVar {
+                    name: "TLS_KEY".into(),
+                    key: "WEB__TLS_KEY".into(),
+                    mode: DeliveryMode::File,
+                    version: Some(4),
+                },
+            ],
+        }
+    }
+
     fn deploy() -> DeployCompose {
         DeployCompose {
             release_id: id(),
@@ -482,22 +531,7 @@ mod tests {
             compose_content: "services:\n  web:\n    image: x\n".into(),
             compose_dir: "/opt/uirapuru/services/acme/web".into(),
             env_plain: BTreeMap::from([("LOG_LEVEL".into(), "info".into())]),
-            secure_vars: vec![
-                SecureVar {
-                    name: "DATABASE_URL".into(),
-                    mode: DeliveryMode::Env,
-                },
-                SecureVar {
-                    name: "TLS_KEY".into(),
-                    mode: DeliveryMode::File,
-                },
-            ],
-            ciphera: Some(CipheraAccess {
-                url: "https://ciphera.example".into(),
-                service_token: "st_super_secret".into(),
-                project: "acme".into(),
-                environment: "production".into(),
-            }),
+            secrets: Some(secrets()),
             replicas: Some(3),
         }
     }
@@ -632,6 +666,8 @@ mod tests {
                     service_name: "web".into(),
                     compose_dir: "/opt/x".into(),
                     replicas: 3,
+                    env_plain: BTreeMap::new(),
+                    secrets: Some(secrets()),
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -692,7 +728,7 @@ mod tests {
             RotateCredential {
                 new_secret: "rotate_secret_value".into()
             },
-            deploy().ciphera,
+            deploy().secrets,
         );
         for secret in [
             "enroll_secret_value",
@@ -746,6 +782,8 @@ mod tests {
                 project_name: "p".into(),
                 service_name: "s".into(),
                 compose_dir: "/d".into(),
+                env_plain: BTreeMap::from([("A".into(), "1".into())]),
+                secrets: Some(secrets()),
             }),
             CommandKind::StopService(StopService {
                 compose_dir: Some("/d".into()),
@@ -756,6 +794,8 @@ mod tests {
                 service_name: "s".into(),
                 compose_dir: "/d".into(),
                 replicas: 2,
+                env_plain: BTreeMap::new(),
+                secrets: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),
