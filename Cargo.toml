@@ -1,0 +1,19 @@
+[package]
+name = "uirapuru-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "Wire protocol shared by the Uirapuru hub and agent"
+
+[dependencies]
+aes-gcm = "0.10"
+hkdf = "0.12"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8"] }
+rmp-serde = "1"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+uuid = { version = "1.13", features = ["v7", "serde"] }
+
+[dev-dependencies]
+hex = "0.4"
