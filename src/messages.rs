@@ -330,9 +330,10 @@ pub struct RollbackCompose {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StopService {
-    pub project_name: String,
-    pub service_name: String,
-    pub compose_dir: String,
+    /// Compose stack to bring down (services).
+    pub compose_dir: Option<String>,
+    /// Standalone container to stop (managed resources).
+    pub container_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -363,15 +364,18 @@ pub struct ProvisionResource {
     pub resource_id: Uuid,
     pub kind: String,
     pub name: String,
-    pub config_json: String,
+    pub image: String,
+    pub container_name: String,
+    /// `KEY=VALUE` entries.
+    pub env: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunBackup {
     pub backup_id: Uuid,
     pub resource_id: Uuid,
-    pub method: String,
-    pub target: String,
+    /// e.g. `pg_dump`.
+    pub backup_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
