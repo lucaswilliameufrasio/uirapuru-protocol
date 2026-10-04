@@ -392,8 +392,23 @@ pub struct ProvisionResource {
     pub name: String,
     pub image: String,
     pub container_name: String,
-    /// `KEY=VALUE` entries.
+    /// `KEY=VALUE` entries (not secret: they travel in the command).
     pub env: Vec<String>,
+    /// Replaces the image's entrypoint (`docker run --entrypoint`); templates
+    /// use `sh` to put a secret from the environment into a flag.
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+    /// Arguments after the image. Passed as is, never through a shell by the
+    /// agent (a template that needs a secret in a flag uses `sh -c` itself).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Named volumes, `name:/absolute/path`. Host paths are refused.
+    #[serde(default)]
+    pub volumes: Vec<String>,
+    /// Secrets fetched by the agent straight from Ciphera and given to the
+    /// container as environment variables.
+    #[serde(default)]
+    pub secrets: Option<SecretsSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -808,6 +823,10 @@ mod tests {
                 image: "postgres:18".into(),
                 container_name: "resource_db".into(),
                 env: vec!["A=1".into()],
+                entrypoint: Some("sh".into()),
+                args: vec!["-js".into()],
+                volumes: vec!["data:/data".into()],
+                secrets: None,
             }),
             CommandKind::RunBackup(RunBackup {
                 backup_id: id(),
