@@ -160,11 +160,13 @@ pub struct ContainerEvent {
     pub at_ms: i64,
 }
 
-/// Cumulative counters; the hub derives rates between samples.
+/// One container's usage. CPU is the share of one core over the last sampling
+/// window (100.00% = one core, in hundredths of a percent); the other counters
+/// are cumulative, so the hub derives rates between samples.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatSample {
     pub container_id: String,
-    pub cpu_ns: u64,
+    pub cpu_centi_percent: u32,
     pub mem_bytes: u64,
     pub mem_limit_bytes: u64,
     pub net_rx_bytes: u64,
@@ -174,9 +176,25 @@ pub struct StatSample {
     pub pids: u32,
 }
 
+/// The server itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostSample {
+    /// Busy share of all cores since the previous sample (hundredths of a
+    /// percent of the whole machine: 100.00% = every core busy).
+    pub cpu_centi_percent: u32,
+    pub load1_centi: u32,
+    pub mem_total_bytes: u64,
+    pub mem_available_bytes: u64,
+    pub disk_total_bytes: u64,
+    pub disk_used_bytes: u64,
+    pub uptime_secs: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Stats {
     pub at_ms: i64,
+    #[serde(default)]
+    pub host: Option<HostSample>,
     pub samples: Vec<StatSample>,
 }
 
@@ -604,9 +622,18 @@ mod tests {
             }),
             AgentMessage::Stats(Stats {
                 at_ms: 3,
+                host: Some(HostSample {
+                    cpu_centi_percent: 1234,
+                    load1_centi: 150,
+                    mem_total_bytes: 8,
+                    mem_available_bytes: 4,
+                    disk_total_bytes: 100,
+                    disk_used_bytes: 40,
+                    uptime_secs: 99,
+                }),
                 samples: vec![StatSample {
                     container_id: "abc".into(),
-                    cpu_ns: 10,
+                    cpu_centi_percent: 10,
                     mem_bytes: 20,
                     mem_limit_bytes: 30,
                     net_rx_bytes: 1,
