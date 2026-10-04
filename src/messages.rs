@@ -331,6 +331,10 @@ pub struct DeployCompose {
     #[serde(default)]
     pub secrets: Option<SecretsSpec>,
     pub replicas: Option<u32>,
+    /// Extra Docker network the service joins (the shared one, so gateways can
+    /// reach it by the names in [`crate::naming`]); the agent creates it.
+    #[serde(default)]
+    pub network: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,6 +348,8 @@ pub struct RollbackCompose {
     pub env_plain: BTreeMap<String, String>,
     #[serde(default)]
     pub secrets: Option<SecretsSpec>,
+    #[serde(default)]
+    pub network: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -366,6 +372,8 @@ pub struct Scale {
     pub env_plain: BTreeMap<String, String>,
     #[serde(default)]
     pub secrets: Option<SecretsSpec>,
+    #[serde(default)]
+    pub network: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -548,6 +556,7 @@ mod tests {
             env_plain: BTreeMap::from([("LOG_LEVEL".into(), "info".into())]),
             secrets: Some(secrets()),
             replicas: Some(3),
+            network: Some("uirapuru".into()),
         }
     }
 
@@ -683,6 +692,7 @@ mod tests {
                     replicas: 3,
                     env_plain: BTreeMap::new(),
                     secrets: Some(secrets()),
+                    network: None,
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -799,6 +809,7 @@ mod tests {
                 compose_dir: "/d".into(),
                 env_plain: BTreeMap::from([("A".into(), "1".into())]),
                 secrets: Some(secrets()),
+                network: None,
             }),
             CommandKind::StopService(StopService {
                 compose_dir: Some("/d".into()),
@@ -811,6 +822,7 @@ mod tests {
                 replicas: 2,
                 env_plain: BTreeMap::new(),
                 secrets: None,
+                network: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),

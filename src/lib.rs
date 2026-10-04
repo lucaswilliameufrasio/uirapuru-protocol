@@ -6,6 +6,7 @@ pub mod enrollment;
 pub mod error;
 pub mod handshake;
 pub mod messages;
+pub mod naming;
 pub mod session;
 
 pub use error::ProtocolError;
