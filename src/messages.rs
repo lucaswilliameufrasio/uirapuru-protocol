@@ -144,6 +144,10 @@ pub struct ContainerInfo {
     /// `com.docker.compose.project` label, used for grouping and adoption.
     pub compose_project: Option<String>,
     pub compose_service: Option<String>,
+    /// `com.docker.compose.project.working_dir`: where the stack was started
+    /// from (informational; the hub never reads files there).
+    #[serde(default)]
+    pub compose_workdir: Option<String>,
     /// True when the container belongs to a stack deployed by Uirapuru.
     pub managed: bool,
 }
@@ -353,6 +357,11 @@ pub struct DeployCompose {
     /// reach it by the names in [`crate::naming`]); the agent creates it.
     #[serde(default)]
     pub network: Option<String>,
+    /// Compose project to run under instead of the derived one: an adopted
+    /// stack keeps the name it already had, so its volumes and networks are
+    /// reused rather than recreated empty.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -368,10 +377,15 @@ pub struct RollbackCompose {
     pub secrets: Option<SecretsSpec>,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StopService {
+    /// Compose project override, see [`DeployCompose::project`].
+    #[serde(default)]
+    pub project: Option<String>,
     /// Compose stack to bring down (services).
     pub compose_dir: Option<String>,
     /// Standalone container to stop (managed resources).
@@ -392,6 +406,8 @@ pub struct Scale {
     pub secrets: Option<SecretsSpec>,
     #[serde(default)]
     pub network: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -575,6 +591,7 @@ mod tests {
             secrets: Some(secrets()),
             replicas: Some(3),
             network: Some("uirapuru".into()),
+            project: None,
         }
     }
 
@@ -613,6 +630,7 @@ mod tests {
                     compose_project: Some("acme".into()),
                     compose_service: Some("web".into()),
                     managed: false,
+                    compose_workdir: None,
                 }],
             }),
             AgentMessage::ContainerEvent(ContainerEvent {
@@ -720,6 +738,7 @@ mod tests {
                     env_plain: BTreeMap::new(),
                     secrets: Some(secrets()),
                     network: None,
+                    project: None,
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -837,10 +856,12 @@ mod tests {
                 env_plain: BTreeMap::from([("A".into(), "1".into())]),
                 secrets: Some(secrets()),
                 network: None,
+                project: None,
             }),
             CommandKind::StopService(StopService {
                 compose_dir: Some("/d".into()),
                 container_name: None,
+                project: None,
             }),
             CommandKind::Scale(Scale {
                 project_name: "p".into(),
@@ -850,6 +871,7 @@ mod tests {
                 env_plain: BTreeMap::new(),
                 secrets: None,
                 network: None,
+                project: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),
