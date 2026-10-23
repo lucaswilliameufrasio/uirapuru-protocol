@@ -468,6 +468,49 @@ pub struct PullImage {
     pub image: String,
 }
 
+/// Asks which ports containers have open. The answer is a [`PortsReport`] in the
+/// command result's `result_json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListPorts {
+    /// Container names (`<project>-<service>-<n>`).
+    pub containers: Vec<String>,
+}
+
+/// Who can reach a listening socket from inside the container's network.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BindScope {
+    /// Every interface (`0.0.0.0`, `::`): other containers can connect.
+    All,
+    /// Only the container itself (`127.0.0.1`, `::1`): a proxy cannot connect.
+    Loopback,
+    /// One specific address.
+    Address,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListeningPort {
+    pub port: u16,
+    pub address: String,
+    pub scope: BindScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerPorts {
+    pub name: String,
+    /// `false` when the container does not exist or is stopped.
+    pub running: bool,
+    /// Ports the container declares (compose `ports`/`expose`, the image's `EXPOSE`), TCP.
+    pub exposed: Vec<u16>,
+    /// TCP sockets in the LISTEN state; `None` when they could not be read.
+    pub listening: Option<Vec<ListeningPort>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PortsReport {
+    pub containers: Vec<ContainerPorts>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CommandKind {
@@ -480,6 +523,7 @@ pub enum CommandKind {
     RunBackup(RunBackup),
     PullImage(PullImage),
     ScanUnmanaged,
+    ListPorts(ListPorts),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -813,6 +857,24 @@ mod tests {
     }
 
     #[test]
+    fn a_ports_report_survives_a_round_trip() {
+        let report = PortsReport {
+            containers: vec![ContainerPorts {
+                name: "web-1".into(),
+                running: true,
+                exposed: vec![3000],
+                listening: Some(vec![ListeningPort {
+                    port: 3000,
+                    address: "0.0.0.0".into(),
+                    scope: BindScope::All,
+                }]),
+            }],
+        };
+        let bytes = crate::encode(&report).unwrap();
+        assert_eq!(crate::decode::<PortsReport>(&bytes).unwrap(), report);
+    }
+
+    #[test]
     fn unknown_fields_are_ignored_for_forward_compatibility() {
         #[derive(Serialize)]
         struct AckV2 {
@@ -899,6 +961,9 @@ mod tests {
                 image: "x:1".into(),
             }),
             CommandKind::ScanUnmanaged,
+            CommandKind::ListPorts(ListPorts {
+                containers: vec!["uir-a-b-web-1".into()],
+            }),
         ];
         for kind in kinds {
             let msg = HubMessage::Command(Box::new(Command {
