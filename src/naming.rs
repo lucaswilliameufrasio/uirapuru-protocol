@@ -56,6 +56,24 @@ pub fn replica_dns_name(project: &str, service: &str, index: u32) -> String {
     format!("{project}-{service}-{index}")
 }
 
+/// A name a service may be given on the shared network besides its own:
+/// DNS labels (lower case letters, digits, `-`) joined by dots, at most 63
+/// characters each and 253 in all. The hub and the agent both check it, so
+/// nothing odd ever reaches a Compose file.
+pub fn valid_network_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias.len() <= 253
+        && alias.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +104,24 @@ mod tests {
     #[test]
     fn replicas_are_numbered_from_one() {
         assert_eq!(replica_dns_name("uir-a-1", "web", 2), "uir-a-1-web-2");
+    }
+
+    #[test]
+    fn aliases_are_dns_names() {
+        assert!(valid_network_alias("backend.shop.interno"));
+        assert!(valid_network_alias("api"));
+        for bad in [
+            "",
+            "Backend",
+            "a..b",
+            "-a",
+            "a-",
+            "a b",
+            "a/b",
+            "a:80",
+            &"x".repeat(64),
+        ] {
+            assert!(!valid_network_alias(bad), "{bad}");
+        }
     }
 }

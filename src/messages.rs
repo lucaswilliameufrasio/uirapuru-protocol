@@ -357,6 +357,10 @@ pub struct DeployCompose {
     /// reach it by the names in [`crate::naming`]); the agent creates it.
     #[serde(default)]
     pub network: Option<String>,
+    /// Names the service answers to on [`Self::network`], besides its own
+    /// (stable aliases such as `backend.shop.interno`). Ignored without a network.
+    #[serde(default)]
+    pub network_aliases: Vec<String>,
     /// Compose project to run under instead of the derived one: an adopted
     /// stack keeps the name it already had, so its volumes and networks are
     /// reused rather than recreated empty.
@@ -377,6 +381,10 @@ pub struct RollbackCompose {
     pub secrets: Option<SecretsSpec>,
     #[serde(default)]
     pub network: Option<String>,
+    /// Names the service answers to on [`Self::network`], besides its own
+    /// (stable aliases such as `backend.shop.interno`). Ignored without a network.
+    #[serde(default)]
+    pub network_aliases: Vec<String>,
     #[serde(default)]
     pub project: Option<String>,
 }
@@ -406,6 +414,10 @@ pub struct Scale {
     pub secrets: Option<SecretsSpec>,
     #[serde(default)]
     pub network: Option<String>,
+    /// Names the service answers to on [`Self::network`], besides its own
+    /// (stable aliases such as `backend.shop.interno`). Ignored without a network.
+    #[serde(default)]
+    pub network_aliases: Vec<String>,
     #[serde(default)]
     pub project: Option<String>,
 }
@@ -635,6 +647,7 @@ mod tests {
             secrets: Some(secrets()),
             replicas: Some(3),
             network: Some("uirapuru".into()),
+            network_aliases: vec!["backend.shop.interno".into()],
             project: None,
         }
     }
@@ -782,6 +795,7 @@ mod tests {
                     env_plain: BTreeMap::new(),
                     secrets: Some(secrets()),
                     network: None,
+                    network_aliases: Vec::new(),
                     project: None,
                 }),
             })),
@@ -918,6 +932,7 @@ mod tests {
                 env_plain: BTreeMap::from([("A".into(), "1".into())]),
                 secrets: Some(secrets()),
                 network: None,
+                network_aliases: Vec::new(),
                 project: None,
             }),
             CommandKind::StopService(StopService {
@@ -933,6 +948,7 @@ mod tests {
                 env_plain: BTreeMap::new(),
                 secrets: None,
                 network: None,
+                network_aliases: Vec::new(),
                 project: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
