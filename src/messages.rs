@@ -307,6 +307,35 @@ impl fmt::Debug for CipheraAccess {
     }
 }
 
+/// Credential the agent hands to the image build so it can clone a private
+/// repository. It is passed to `docker compose` as a BuildKit secret read from
+/// the process environment, so it is never written to the compose file, the
+/// image or `docker inspect`.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct GitBuildToken(String);
+
+impl GitBuildToken {
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for GitBuildToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("GitBuildToken(<redacted>)")
+    }
+}
+
+/// Name of the environment variable the compose file generated for a build
+/// reads the [`GitBuildToken`] from (`secrets: … environment:`). The agent
+/// sets it only on the `docker compose` processes of a command.
+pub const GIT_BUILD_TOKEN_ENV: &str = "UIRAPURU_GIT_TOKEN";
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryMode {
@@ -366,6 +395,10 @@ pub struct DeployCompose {
     /// reused rather than recreated empty.
     #[serde(default)]
     pub project: Option<String>,
+    /// Lets the build clone a private repository (see [`GitBuildToken`]).
+    /// Minted at dispatch time and never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_git_token: Option<GitBuildToken>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -420,6 +453,10 @@ pub struct Scale {
     pub network_aliases: Vec<String>,
     #[serde(default)]
     pub project: Option<String>,
+    /// Lets the build clone a private repository (see [`GitBuildToken`]).
+    /// Minted at dispatch time and never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_git_token: Option<GitBuildToken>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -649,7 +686,29 @@ mod tests {
             network: Some("uirapuru".into()),
             network_aliases: vec!["backend.shop.interno".into()],
             project: None,
+            build_git_token: Some(GitBuildToken::new("ghs_example")),
         }
+    }
+
+    #[test]
+    fn git_build_token_never_shows_in_debug_and_is_optional_on_the_wire() {
+        let with = deploy();
+        assert!(!format!("{with:?}").contains("ghs_example"));
+        let bytes = rmp_serde::to_vec_named(&with).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(),
+            with
+        );
+
+        // Without a token the key is not sent, and a peer that never sent it decodes to none.
+        let without = DeployCompose {
+            build_git_token: None,
+            ..deploy()
+        };
+        let bytes = rmp_serde::to_vec_named(&without).unwrap();
+        assert!(!bytes.windows(15).any(|w| w == b"build_git_token"));
+        let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back.build_git_token, None);
     }
 
     #[test]
@@ -797,6 +856,7 @@ mod tests {
                     network: None,
                     network_aliases: Vec::new(),
                     project: None,
+                    build_git_token: None,
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -950,6 +1010,7 @@ mod tests {
                 network: None,
                 network_aliases: Vec::new(),
                 project: None,
+                build_git_token: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),
