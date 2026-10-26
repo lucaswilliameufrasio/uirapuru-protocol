@@ -331,6 +331,24 @@ impl fmt::Debug for GitBuildToken {
     }
 }
 
+/// Limits for the build of a deploy that has to build on the machine that
+/// runs it (the destination). The agent applies them to a dedicated BuildKit
+/// builder, so a build cannot starve the services already running there.
+/// Chosen in the hub UI and sent with each command that may build.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuildLimits {
+    /// Memory the builder may use, in MiB.
+    pub memory_mb: u32,
+    /// CPU the builder may use, in thousandths of a CPU (1000 = one CPU).
+    pub cpu_millis: u32,
+    /// The build is refused when the Docker data directory has less free
+    /// space than this, in MiB.
+    pub min_free_disk_mb: u64,
+    /// The build is refused when the machine has less available memory than
+    /// this, in MiB.
+    pub min_free_memory_mb: u64,
+}
+
 /// Name of the environment variable the compose file generated for a build
 /// reads the [`GitBuildToken`] from (`secrets: … environment:`). The agent
 /// sets it only on the `docker compose` processes of a command.
@@ -399,6 +417,9 @@ pub struct DeployCompose {
     /// Minted at dispatch time and never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_git_token: Option<GitBuildToken>,
+    /// Limits the build when the deploy builds on this machine (see [`BuildLimits`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_limits: Option<BuildLimits>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -457,6 +478,9 @@ pub struct Scale {
     /// Minted at dispatch time and never stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_git_token: Option<GitBuildToken>,
+    /// Limits the build when the deploy builds on this machine (see [`BuildLimits`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_limits: Option<BuildLimits>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -687,6 +711,7 @@ mod tests {
             network_aliases: vec!["backend.shop.interno".into()],
             project: None,
             build_git_token: Some(GitBuildToken::new("ghs_example")),
+            build_limits: None,
         }
     }
 
@@ -703,12 +728,38 @@ mod tests {
         // Without a token the key is not sent, and a peer that never sent it decodes to none.
         let without = DeployCompose {
             build_git_token: None,
+            build_limits: None,
             ..deploy()
         };
         let bytes = rmp_serde::to_vec_named(&without).unwrap();
         assert!(!bytes.windows(15).any(|w| w == b"build_git_token"));
         let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.build_git_token, None);
+    }
+
+    #[test]
+    fn build_limits_are_optional_on_the_wire() {
+        let limits = BuildLimits {
+            memory_mb: 2048,
+            cpu_millis: 1500,
+            min_free_disk_mb: 10_240,
+            min_free_memory_mb: 512,
+        };
+        let with = DeployCompose {
+            build_limits: Some(limits),
+            ..deploy()
+        };
+        let bytes = rmp_serde::to_vec_named(&with).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(),
+            with
+        );
+
+        // Without limits the key is not sent, and a peer that never sent it decodes to none.
+        let bytes = rmp_serde::to_vec_named(&deploy()).unwrap();
+        assert!(!bytes.windows(12).any(|w| w == b"build_limits"));
+        let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back.build_limits, None);
     }
 
     #[test]
@@ -857,6 +908,7 @@ mod tests {
                     network_aliases: Vec::new(),
                     project: None,
                     build_git_token: None,
+                    build_limits: None,
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -1011,6 +1063,7 @@ mod tests {
                 network_aliases: Vec::new(),
                 project: None,
                 build_git_token: None,
+                build_limits: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),
