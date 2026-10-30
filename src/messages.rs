@@ -425,6 +425,24 @@ pub struct DeployCompose {
     /// deploy needs it to know the new slot can take traffic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_healthy_secs: Option<u32>,
+    /// A check the agent makes from outside the container, over the shared
+    /// network, after `up`: it works for any image (a distroless one has no
+    /// shell or `curl` for a healthcheck inside). Needs `network`; the deploy
+    /// fails if the service does not answer within `wait_healthy_secs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<HttpProbe>,
+}
+
+/// `GET <path>` on `<replica>:<port>` until it answers 2xx or 3xx.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HttpProbe {
+    pub port: u16,
+    /// Starts with `/`.
+    pub path: String,
+    /// Pause between attempts.
+    pub interval_secs: u32,
+    /// Limit for one attempt.
+    pub timeout_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -718,6 +736,7 @@ mod tests {
             build_git_token: Some(GitBuildToken::new("ghs_example")),
             build_limits: None,
             wait_healthy_secs: None,
+            probe: None,
         }
     }
 
@@ -784,6 +803,29 @@ mod tests {
         assert!(!bytes.windows(17).any(|w| w == b"wait_healthy_secs"));
         let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.wait_healthy_secs, None);
+    }
+
+    #[test]
+    fn the_probe_is_optional_on_the_wire() {
+        let with = DeployCompose {
+            probe: Some(HttpProbe {
+                port: 8080,
+                path: "/health-check".into(),
+                interval_secs: 2,
+                timeout_secs: 3,
+            }),
+            ..deploy()
+        };
+        let bytes = rmp_serde::to_vec_named(&with).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(),
+            with
+        );
+
+        let bytes = rmp_serde::to_vec_named(&deploy()).unwrap();
+        assert!(!bytes.windows(5).any(|w| w == b"probe"));
+        let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back.probe, None);
     }
 
     #[test]
