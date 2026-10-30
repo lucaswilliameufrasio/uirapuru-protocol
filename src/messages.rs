@@ -433,6 +433,23 @@ pub struct DeployCompose {
     pub probe: Option<HttpProbe>,
 }
 
+/// After a switch, keeps asking the replicas of the new version whether they
+/// answer, for `duration_secs`. The result (`result_json`) is
+/// `{"verdict": "healthy" | "unhealthy", "reason": "..."}`: `unhealthy` after
+/// `max_failures` rounds in a row in which some replica did not answer. A command
+/// that fails for any other reason has no verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WatchService {
+    /// The Compose project (slot) that now takes the traffic.
+    pub project: String,
+    pub service_name: String,
+    /// The shared network the replicas are reached on.
+    pub network: String,
+    pub probe: HttpProbe,
+    pub duration_secs: u32,
+    pub max_failures: u32,
+}
+
 /// `GET <path>` on `<replica>:<port>` until it answers 2xx or 3xx.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HttpProbe {
@@ -620,6 +637,7 @@ pub enum CommandKind {
     PullImage(PullImage),
     ScanUnmanaged,
     ListPorts(ListPorts),
+    WatchService(WatchService),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -826,6 +844,25 @@ mod tests {
         assert!(!bytes.windows(5).any(|w| w == b"probe"));
         let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.probe, None);
+    }
+
+    #[test]
+    fn a_watch_command_roundtrips() {
+        let watch = CommandKind::WatchService(WatchService {
+            project: "uir-a-web".into(),
+            service_name: "web".into(),
+            network: "uirapuru".into(),
+            probe: HttpProbe {
+                port: 8080,
+                path: "/health-check".into(),
+                interval_secs: 2,
+                timeout_secs: 3,
+            },
+            duration_secs: 300,
+            max_failures: 3,
+        });
+        let bytes = rmp_serde::to_vec_named(&watch).unwrap();
+        assert_eq!(rmp_serde::from_slice::<CommandKind>(&bytes).unwrap(), watch);
     }
 
     #[test]
