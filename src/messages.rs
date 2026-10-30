@@ -420,6 +420,11 @@ pub struct DeployCompose {
     /// Limits the build when the deploy builds on this machine (see [`BuildLimits`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_limits: Option<BuildLimits>,
+    /// Waits up to this many seconds for every container with a healthcheck to
+    /// be healthy before the deploy counts as done (`up --wait`). A blue-green
+    /// deploy needs it to know the new slot can take traffic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_healthy_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -712,6 +717,7 @@ mod tests {
             project: None,
             build_git_token: Some(GitBuildToken::new("ghs_example")),
             build_limits: None,
+            wait_healthy_secs: None,
         }
     }
 
@@ -760,6 +766,24 @@ mod tests {
         assert!(!bytes.windows(12).any(|w| w == b"build_limits"));
         let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.build_limits, None);
+    }
+
+    #[test]
+    fn wait_healthy_is_optional_on_the_wire() {
+        let with = DeployCompose {
+            wait_healthy_secs: Some(120),
+            ..deploy()
+        };
+        let bytes = rmp_serde::to_vec_named(&with).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(),
+            with
+        );
+
+        let bytes = rmp_serde::to_vec_named(&deploy()).unwrap();
+        assert!(!bytes.windows(17).any(|w| w == b"wait_healthy_secs"));
+        let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(back.wait_healthy_secs, None);
     }
 
     #[test]
