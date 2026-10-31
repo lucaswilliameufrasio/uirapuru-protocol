@@ -431,6 +431,12 @@ pub struct DeployCompose {
     /// fails if the service does not answer within `wait_healthy_secs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<HttpProbe>,
+    /// Replaces the replicas one at a time instead of all at once: for each old
+    /// replica the agent starts a new one beside it, waits until it answers
+    /// (`probe` or the container healthcheck), and only then stops the old one.
+    /// Nothing changes when the service has no replica running yet.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rolling: bool,
 }
 
 /// After a switch, keeps asking the replicas of the new version whether they
@@ -755,6 +761,7 @@ mod tests {
             build_limits: None,
             wait_healthy_secs: None,
             probe: None,
+            rolling: false,
         }
     }
 
@@ -821,6 +828,23 @@ mod tests {
         assert!(!bytes.windows(17).any(|w| w == b"wait_healthy_secs"));
         let back: DeployCompose = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(back.wait_healthy_secs, None);
+    }
+
+    #[test]
+    fn rolling_is_optional_on_the_wire() {
+        let with = DeployCompose {
+            rolling: true,
+            ..deploy()
+        };
+        let bytes = rmp_serde::to_vec_named(&with).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(),
+            with
+        );
+
+        let bytes = rmp_serde::to_vec_named(&deploy()).unwrap();
+        assert!(!bytes.windows(7).any(|w| w == b"rolling"));
+        assert!(!rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap().rolling);
     }
 
     #[test]
