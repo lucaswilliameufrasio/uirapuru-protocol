@@ -341,6 +341,54 @@ pub struct LogRotation {
     pub max_files: u32,
 }
 
+/// One kind of thing Docker keeps on the disk, from `docker system df`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiskPart {
+    pub count: u64,
+    pub bytes: u64,
+    /// What a cleanup of this kind could give back right now.
+    pub reclaimable_bytes: u64,
+}
+
+/// The answer to [`CommandKind::DiskUsage`] (the command's result JSON).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiskReport {
+    pub images: DiskPart,
+    pub containers: DiskPart,
+    pub volumes: DiskPart,
+    pub build_cache: DiskPart,
+}
+
+/// Gives back disk space Docker holds on to. Volumes are never touched. Each part is chosen by the
+/// hub; the agent does only what is asked.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CleanDisk {
+    /// Build cache older than a day.
+    #[serde(default)]
+    pub build_cache: bool,
+    /// Images with no name (left behind when a tag moves to a newer build).
+    #[serde(default)]
+    pub dangling_images: bool,
+    /// Images no container uses, older than this many days, except `keep_images`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unused_images_older_than_days: Option<u32>,
+    /// Containers that are not running.
+    #[serde(default)]
+    pub stopped_containers: bool,
+    /// Image references (`name:tag` or an id) that stay whatever their age.
+    #[serde(default)]
+    pub keep_images: Vec<String>,
+}
+
+/// The answer to [`CommandKind::CleanDisk`] (the command's result JSON).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CleanReport {
+    pub removed_images: u32,
+    pub removed_containers: u32,
+    /// Images, containers and build cache before minus after.
+    pub reclaimed_bytes: u64,
+}
+
 /// Limits for the build of a deploy that has to build on the machine that
 /// runs it (the destination). The agent applies them to a dedicated BuildKit
 /// builder, so a build cannot starve the services already running there.
@@ -664,6 +712,9 @@ pub enum CommandKind {
     RunBackup(RunBackup),
     PullImage(PullImage),
     ScanUnmanaged,
+    /// What Docker holds on the disk (the answer is a [`DiskReport`]).
+    DiskUsage,
+    CleanDisk(CleanDisk),
     ListPorts(ListPorts),
     WatchService(WatchService),
 }
@@ -1249,6 +1300,14 @@ mod tests {
             }),
             CommandKind::PullImage(PullImage {
                 image: "x:1".into(),
+            }),
+            CommandKind::DiskUsage,
+            CommandKind::CleanDisk(CleanDisk {
+                build_cache: true,
+                dangling_images: true,
+                unused_images_older_than_days: Some(30),
+                stopped_containers: false,
+                keep_images: vec!["ghcr.io/acme/api:1".into()],
             }),
             CommandKind::ScanUnmanaged,
             CommandKind::ListPorts(ListPorts {
