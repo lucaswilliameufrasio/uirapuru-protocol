@@ -331,6 +331,16 @@ impl fmt::Debug for GitBuildToken {
     }
 }
 
+/// How the container logs of a service are rotated by Docker (the `json-file` driver): each file
+/// is cut at `max_size_mb` and only the newest `max_files` are kept, so a chatty service cannot
+/// fill the disk. Sent with the commands that (re)create the service's containers; the agent
+/// writes it into the compose override. It replaces any `logging` the compose file has.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogRotation {
+    pub max_size_mb: u32,
+    pub max_files: u32,
+}
+
 /// Limits for the build of a deploy that has to build on the machine that
 /// runs it (the destination). The agent applies them to a dedicated BuildKit
 /// builder, so a build cannot starve the services already running there.
@@ -437,6 +447,10 @@ pub struct DeployCompose {
     /// Nothing changes when the service has no replica running yet.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rolling: bool,
+    /// Rotates the service's container logs (see [`LogRotation`]); without it the compose file's
+    /// own `logging`, or Docker's default, applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_rotation: Option<LogRotation>,
 }
 
 /// After a switch, keeps asking the replicas of the new version whether they
@@ -487,6 +501,10 @@ pub struct RollbackCompose {
     pub network_aliases: Vec<String>,
     #[serde(default)]
     pub project: Option<String>,
+    /// Rotates the service's container logs (see [`LogRotation`]); without it the compose file's
+    /// own `logging`, or Docker's default, applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_rotation: Option<LogRotation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -527,6 +545,10 @@ pub struct Scale {
     /// Limits the build when the deploy builds on this machine (see [`BuildLimits`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_limits: Option<BuildLimits>,
+    /// Rotates the service's container logs (see [`LogRotation`]); without it the compose file's
+    /// own `logging`, or Docker's default, applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_rotation: Option<LogRotation>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -762,6 +784,10 @@ mod tests {
             wait_healthy_secs: None,
             probe: None,
             rolling: false,
+            log_rotation: Some(LogRotation {
+                max_size_mb: 10,
+                max_files: 3,
+            }),
         }
     }
 
@@ -844,7 +870,11 @@ mod tests {
 
         let bytes = rmp_serde::to_vec_named(&deploy()).unwrap();
         assert!(!bytes.windows(7).any(|w| w == b"rolling"));
-        assert!(!rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap().rolling);
+        assert!(
+            !rmp_serde::from_slice::<DeployCompose>(&bytes)
+                .unwrap()
+                .rolling
+        );
     }
 
     #[test]
@@ -1036,6 +1066,7 @@ mod tests {
                     project: None,
                     build_git_token: None,
                     build_limits: None,
+                    log_rotation: None,
                 }),
             })),
             HubMessage::CancelCommand(CancelCommand { id: id() }),
@@ -1173,6 +1204,7 @@ mod tests {
                 network: None,
                 network_aliases: Vec::new(),
                 project: None,
+                log_rotation: None,
             }),
             CommandKind::StopService(StopService {
                 compose_dir: Some("/d".into()),
@@ -1191,6 +1223,7 @@ mod tests {
                 project: None,
                 build_git_token: None,
                 build_limits: None,
+                log_rotation: None,
             }),
             CommandKind::ContainerAction(ContainerAction {
                 container_id: "c".into(),
