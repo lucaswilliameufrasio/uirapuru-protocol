@@ -700,6 +700,81 @@ pub struct PortsReport {
     pub containers: Vec<ContainerPorts>,
 }
 
+/// Asks how existing containers are configured, to write a Compose file for them. The answer is a
+/// [`ContainerSpecs`] in the command result's `result_json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InspectContainers {
+    /// Container names.
+    pub containers: Vec<String>,
+}
+
+/// An environment variable of a container. `value` is `None` when the agent judged it a secret
+/// (by its name, or because the value carries credentials): such a value never leaves the host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnvEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// `true` when `value` was withheld as a secret.
+    #[serde(default)]
+    pub secret: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PublishedPort {
+    /// The host address it is bound to (`0.0.0.0`, `127.0.0.1`...).
+    pub host_ip: String,
+    pub host_port: u16,
+    pub container_port: u16,
+    /// `tcp`, `udp` or `sctp`.
+    pub protocol: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MountSpec {
+    /// `bind` or `volume` (anything else, such as `tmpfs`, is listed in `unsupported`).
+    pub kind: String,
+    /// The host path (`bind`) or the volume name (`volume`).
+    pub source: String,
+    pub target: String,
+    pub read_only: bool,
+}
+
+/// How an existing container is configured: enough to write a Compose service that recreates it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerSpec {
+    pub name: String,
+    /// `false` when the container does not exist (nothing else is filled in).
+    pub found: bool,
+    pub running: bool,
+    /// The image reference the container was created from.
+    pub image: String,
+    /// `no`, `always`, `unless-stopped` or `on-failure`.
+    pub restart: String,
+    /// The command and entrypoint set on the container, when they differ from the image's.
+    pub command: Option<Vec<String>>,
+    pub entrypoint: Option<Vec<String>>,
+    pub working_dir: Option<String>,
+    pub user: Option<String>,
+    pub env: Vec<EnvEntry>,
+    pub ports: Vec<PublishedPort>,
+    pub mounts: Vec<MountSpec>,
+    /// User-defined networks the container is on (not `bridge`/`host`/`none`).
+    pub networks: Vec<String>,
+    /// `host`, `none` or `container:...` when the container is not on a normal network.
+    pub network_mode: Option<String>,
+    pub privileged: bool,
+    pub cap_add: Vec<String>,
+    /// Settings the generated Compose does NOT carry over (devices, limits, tmpfs, security options...),
+    /// each said in a few words, so the review shows what would change.
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerSpecs {
+    pub containers: Vec<ContainerSpec>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CommandKind {
@@ -716,6 +791,8 @@ pub enum CommandKind {
     DiskUsage,
     CleanDisk(CleanDisk),
     ListPorts(ListPorts),
+    /// How existing containers are configured (the answer is a [`ContainerSpecs`]).
+    InspectContainers(InspectContainers),
     WatchService(WatchService),
 }
 
@@ -1240,6 +1317,18 @@ mod tests {
     /// Every command variant must survive the wire. Internally tagged enums
     /// break silently when a payload field reuses the tag name.
     #[test]
+    fn a_withheld_secret_carries_no_value() {
+        let entry = EnvEntry {
+            name: "DB_PASSWORD".into(),
+            value: None,
+            secret: true,
+        };
+        let bytes = rmp_serde::to_vec_named(&entry).unwrap();
+        assert!(!bytes.windows(5).any(|w| w == b"value"));
+        assert_eq!(rmp_serde::from_slice::<EnvEntry>(&bytes).unwrap(), entry);
+    }
+
+    #[test]
     fn every_command_kind_roundtrips() {
         let (mut agent, mut hub) = pair();
         let kinds = vec![
@@ -1312,6 +1401,9 @@ mod tests {
             CommandKind::ScanUnmanaged,
             CommandKind::ListPorts(ListPorts {
                 containers: vec!["uir-a-b-web-1".into()],
+            }),
+            CommandKind::InspectContainers(InspectContainers {
+                containers: vec!["legacy-web".into()],
             }),
         ];
         for kind in kinds {
