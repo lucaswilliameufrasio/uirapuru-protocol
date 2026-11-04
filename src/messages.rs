@@ -183,6 +183,16 @@ pub struct RegistryProbeReport {
     pub message: Option<String>,
 }
 
+/// Credential to pull a private image from a registry. The agent logs in with a Docker config
+/// of its own for the deploy only; the daemon's credentials are untouched. Added by the hub
+/// when it sends the command, never stored with the queued command.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegistryLogin {
+    pub server: String,
+    pub username: String,
+    pub password: RegistrySecret,
+}
+
 /// Asks a builder to build an image from a repository and push it to a
 /// registry. The answer is a [`BuildImageReport`]; progress goes out as the
 /// command's log lines and the build is cancelled with `CancelCommand`.
@@ -581,6 +591,9 @@ pub struct DeployCompose {
     /// Limits the build when the deploy builds on this machine (see [`BuildLimits`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_limits: Option<BuildLimits>,
+    /// Lets the deploy pull a private image (a build pushed by a builder).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_login: Option<RegistryLogin>,
     /// Waits up to this many seconds for every container with a healthcheck to
     /// be healthy before the deploy counts as done (`up --wait`). A blue-green
     /// deploy needs it to know the new slot can take traffic.
@@ -1016,6 +1029,7 @@ mod tests {
             project: None,
             build_git_token: Some(GitBuildToken::new("ghs_example")),
             build_limits: None,
+            registry_login: None,
             wait_healthy_secs: None,
             probe: None,
             rolling: false,
@@ -1346,6 +1360,21 @@ mod tests {
         };
         let bytes = rmp_serde::to_vec_named(&hello).unwrap();
         assert_eq!(rmp_serde::from_slice::<ClientHello>(&bytes).unwrap(), hello);
+    }
+
+    #[test]
+    fn a_registry_login_is_optional_on_the_wire_and_redacted() {
+        let mut d = deploy();
+        let bytes = rmp_serde::to_vec_named(&d).unwrap();
+        assert!(!bytes.windows(14).any(|w| w == b"registry_login"));
+        d.registry_login = Some(RegistryLogin {
+            server: "ghcr.io".into(),
+            username: "acme".into(),
+            password: RegistrySecret::new("ghp_pull"),
+        });
+        assert!(!format!("{d:?}").contains("ghp_pull"));
+        let bytes = rmp_serde::to_vec_named(&d).unwrap();
+        assert_eq!(rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(), d);
     }
 
     #[test]
