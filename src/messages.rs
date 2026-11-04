@@ -131,6 +131,20 @@ pub struct Inventory {
     pub compose_version: Option<String>,
     pub resources: Resources,
     pub private_network: Option<PrivateNetwork>,
+    /// What this machine can build, when it can. Absent on agents that do not
+    /// report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildCapacity>,
+}
+
+/// What a machine offers as a builder. `platforms` are the platforms it builds
+/// natively (e.g. `linux/amd64`). `emulation` says whether binfmt/qemu handlers
+/// are registered, so the hub can refuse to schedule a build that would run
+/// emulated unless the operator allowed it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuildCapacity {
+    pub platforms: Vec<String>,
+    pub emulation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1069,6 +1083,10 @@ mod tests {
                 private_network: Some(PrivateNetwork {
                     provider: "tailscale".into(),
                     ip: Some("100.64.0.1".into()),
+                }),
+                build: Some(BuildCapacity {
+                    platforms: vec!["linux/amd64".into()],
+                    emulation: false,
                 }),
             }),
             AgentMessage::ContainerSnapshot(ContainerSnapshot {
