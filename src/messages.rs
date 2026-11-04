@@ -183,6 +183,49 @@ pub struct RegistryProbeReport {
     pub message: Option<String>,
 }
 
+/// Asks a builder to build an image from a repository and push it to a
+/// registry. The answer is a [`BuildImageReport`]; progress goes out as the
+/// command's log lines and the build is cancelled with `CancelCommand`.
+///
+/// The credentials ride the command only: the registry password and the git
+/// token are added by the hub when it sends, never stored with the queued
+/// command, and the agent keeps them out of arguments, files and logs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuildImage {
+    pub release_id: Uuid,
+    /// Git context without credential (`https://host/owner/repo.git#sha:dir`).
+    pub context: String,
+    /// Dockerfile path inside the context.
+    pub dockerfile: String,
+    /// Platform to build for (`linux/arm64`).
+    pub platform: String,
+    /// Where to push, tag included (`ghcr.io/acme/app:abc123`).
+    pub image: String,
+    pub registry_server: String,
+    pub registry_username: String,
+    pub registry_password: RegistrySecret,
+    /// Lets the build clone a private repository (see [`GitBuildToken`]); the
+    /// secret is scoped to this `host[:port]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_token: Option<GitBuildToken>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_authority: Option<String>,
+    /// The operator allowed building with emulation (qemu/binfmt). Without it
+    /// the agent refuses to build a foreign platform on a machine that has
+    /// emulation registered.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_emulation: bool,
+}
+
+/// What a [`BuildImage`] produced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BuildImageReport {
+    /// The image as pushed, with its tag.
+    pub image: String,
+    /// Content digest of the pushed manifest (`sha256:…`).
+    pub digest: String,
+}
+
 /// What a machine offers as a builder. `platforms` are the platforms it builds
 /// natively (e.g. `linux/amd64`). `emulation` says whether binfmt/qemu handlers
 /// are registered, so the hub can refuse to schedule a build that would run
@@ -856,6 +899,8 @@ pub enum CommandKind {
     WatchService(WatchService),
     /// Logs in to a registry and pushes a proof image (the answer is a [`RegistryProbeReport`]).
     RegistryProbe(RegistryProbe),
+    /// Builds an image on this machine and pushes it (the answer is a [`BuildImageReport`]).
+    BuildImage(Box<BuildImage>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1304,6 +1349,28 @@ mod tests {
     }
 
     #[test]
+    fn a_build_image_keeps_its_secrets_out_of_debug() {
+        let build = BuildImage {
+            release_id: id(),
+            context: "https://github.com/acme/app.git#abc".into(),
+            dockerfile: "Dockerfile".into(),
+            platform: "linux/arm64".into(),
+            image: "ghcr.io/acme/app:abc".into(),
+            registry_server: "ghcr.io".into(),
+            registry_username: "acme".into(),
+            registry_password: RegistrySecret::new("ghp_registry"),
+            git_token: Some(GitBuildToken::new("ghs_git")),
+            git_authority: Some("github.com".into()),
+            allow_emulation: false,
+        };
+        let shown = format!("{build:?}");
+        assert!(!shown.contains("ghp_registry") && !shown.contains("ghs_git"));
+        let bytes = rmp_serde::to_vec_named(&build).unwrap();
+        assert!(!bytes.windows(15).any(|w| w == b"allow_emulation"));
+        assert_eq!(rmp_serde::from_slice::<BuildImage>(&bytes).unwrap(), build);
+    }
+
+    #[test]
     fn a_registry_password_is_redacted_in_debug_output() {
         let probe = RegistryProbe {
             server: "ghcr.io".into(),
@@ -1489,6 +1556,19 @@ mod tests {
                 password: RegistrySecret::new("ghp_example"),
                 image_prefix: Some("acme/uirapuru".into()),
             }),
+            CommandKind::BuildImage(Box::new(BuildImage {
+                release_id: id(),
+                context: "https://github.com/acme/app.git#abc:web".into(),
+                dockerfile: "Dockerfile".into(),
+                platform: "linux/amd64".into(),
+                image: "ghcr.io/acme/app:abc".into(),
+                registry_server: "ghcr.io".into(),
+                registry_username: "acme".into(),
+                registry_password: RegistrySecret::new("ghp_example"),
+                git_token: None,
+                git_authority: None,
+                allow_emulation: true,
+            })),
         ];
         for kind in kinds {
             let msg = HubMessage::Command(Box::new(Command {
