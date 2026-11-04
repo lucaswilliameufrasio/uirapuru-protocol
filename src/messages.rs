@@ -137,6 +137,52 @@ pub struct Inventory {
     pub build: Option<BuildCapacity>,
 }
 
+/// Password or token for a registry. Never printed, never stored by the hub's
+/// command queue: the hub adds it when it sends the command.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct RegistrySecret(String);
+
+impl RegistrySecret {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self(secret.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for RegistrySecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RegistrySecret(<redacted>)")
+    }
+}
+
+/// Asks the agent to prove it can use a container registry: log in and push a
+/// tiny image, both with a throw-away Docker config so the daemon's own
+/// credentials are untouched. The answer is a [`RegistryProbeReport`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegistryProbe {
+    /// Registry host, with the port when it is not the default (`ghcr.io`).
+    pub server: String,
+    pub username: String,
+    pub password: RegistrySecret,
+    /// Path inside the registry the proof image goes under (`acme/uirapuru`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_prefix: Option<String>,
+}
+
+/// What a [`RegistryProbe`] found.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegistryProbeReport {
+    pub logged_in: bool,
+    pub pushed: bool,
+    /// Why it stopped, when it did (the registry's own words, never the secret).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 /// What a machine offers as a builder. `platforms` are the platforms it builds
 /// natively (e.g. `linux/amd64`). `emulation` says whether binfmt/qemu handlers
 /// are registered, so the hub can refuse to schedule a build that would run
@@ -808,6 +854,8 @@ pub enum CommandKind {
     /// How existing containers are configured (the answer is a [`ContainerSpecs`]).
     InspectContainers(InspectContainers),
     WatchService(WatchService),
+    /// Logs in to a registry and pushes a proof image (the answer is a [`RegistryProbeReport`]).
+    RegistryProbe(RegistryProbe),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1256,6 +1304,18 @@ mod tests {
     }
 
     #[test]
+    fn a_registry_password_is_redacted_in_debug_output() {
+        let probe = RegistryProbe {
+            server: "ghcr.io".into(),
+            username: "acme".into(),
+            password: RegistrySecret::new("ghp_example"),
+            image_prefix: None,
+        };
+        assert!(!format!("{probe:?}").contains("ghp_example"));
+        assert_eq!(probe.password.expose(), "ghp_example");
+    }
+
+    #[test]
     fn secrets_are_redacted_in_debug_output() {
         let out = format!(
             "{:?} {:?} {:?} {:?} {:?}",
@@ -1422,6 +1482,12 @@ mod tests {
             }),
             CommandKind::InspectContainers(InspectContainers {
                 containers: vec!["legacy-web".into()],
+            }),
+            CommandKind::RegistryProbe(RegistryProbe {
+                server: "ghcr.io".into(),
+                username: "acme".into(),
+                password: RegistrySecret::new("ghp_example"),
+                image_prefix: Some("acme/uirapuru".into()),
             }),
         ];
         for kind in kinds {
