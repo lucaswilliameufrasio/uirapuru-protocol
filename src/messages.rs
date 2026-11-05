@@ -768,6 +768,44 @@ pub struct RunBackup {
     pub container_name: String,
 }
 
+/// Restores a `pg_dump -Fc` file into a resource's database (moving a server, item 24 of the
+/// hub). The file is named, not given by path: it must be in the agent's backups directory,
+/// where the person copied it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestoreBackup {
+    pub resource_id: Uuid,
+    /// Container that holds the data (`resource_<name>`).
+    pub container_name: String,
+    /// File name inside the agent's backups directory.
+    pub file_name: String,
+}
+
+/// Packs a Docker volume into a `tar.gz` file in the agent's backups directory (moving a server).
+/// The answer is a [`VolumeFileReport`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExportVolume {
+    pub volume: String,
+    pub file_name: String,
+    /// Image with `tar` used to read the volume (the agent's own image has none).
+    pub helper_image: String,
+}
+
+/// Unpacks a file from the agent's backups directory into a Docker volume, creating it; refuses
+/// a volume that already holds data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImportVolume {
+    pub volume: String,
+    pub file_name: String,
+    pub helper_image: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VolumeFileReport {
+    /// Where the file is on the machine (what the person copies).
+    pub path: String,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PullImage {
     pub image: String,
@@ -914,6 +952,10 @@ pub enum CommandKind {
     RegistryProbe(RegistryProbe),
     /// Builds an image on this machine and pushes it (the answer is a [`BuildImageReport`]).
     BuildImage(Box<BuildImage>),
+    RestoreBackup(RestoreBackup),
+    /// The answer is a [`VolumeFileReport`].
+    ExportVolume(ExportVolume),
+    ImportVolume(ImportVolume),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1560,6 +1602,21 @@ mod tests {
                 resource_id: id(),
                 backup_type: "pg_dump".into(),
                 container_name: "resource_db".into(),
+            }),
+            CommandKind::RestoreBackup(RestoreBackup {
+                resource_id: id(),
+                container_name: "resource_db".into(),
+                file_name: "resource_db_1.dump".into(),
+            }),
+            CommandKind::ExportVolume(ExportVolume {
+                volume: "acme_web_data".into(),
+                file_name: "acme_web_data.tar.gz".into(),
+                helper_image: "busybox:1.37".into(),
+            }),
+            CommandKind::ImportVolume(ImportVolume {
+                volume: "acme_web_data".into(),
+                file_name: "acme_web_data.tar.gz".into(),
+                helper_image: "busybox:1.37".into(),
             }),
             CommandKind::PullImage(PullImage {
                 image: "x:1".into(),
