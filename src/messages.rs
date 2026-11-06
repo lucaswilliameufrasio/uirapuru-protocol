@@ -799,6 +799,39 @@ pub struct ImportVolume {
     pub helper_image: String,
 }
 
+/// Replaces a part of the Uirapuru itself (hub, UI, agent) that runs under Docker Compose with a
+/// new image, without stopping what it serves. The image is pinned in `compose.versions.yml`, next
+/// to the project's compose files, so a later `docker compose up` keeps it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpgradeComponent {
+    /// The Compose project and the folder with its files, as the container's labels say.
+    pub project: String,
+    pub workdir: String,
+    pub service: String,
+    /// The new image, with its tag.
+    pub image: String,
+    pub swap: ComponentSwap,
+    /// Lets the agent pull a private image. Added when the command is sent, never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_login: Option<RegistryLogin>,
+}
+
+/// How the old container gives way to the new one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ComponentSwap {
+    /// A temporary copy with the new image answers under the service's name on its networks
+    /// while the service is recreated (the hub, the UI). One is ready when
+    /// `http://<container>:<ready_port><ready_path>` answers 2xx, within `ready_within_secs`.
+    Overlap {
+        ready_port: u16,
+        ready_path: String,
+        ready_within_secs: u32,
+    },
+    /// The agent replacing itself: it answers first, then a helper container recreates it.
+    SelfReplace,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VolumeFileReport {
     /// Where the file is on the machine (what the person copies).
@@ -956,6 +989,7 @@ pub enum CommandKind {
     /// The answer is a [`VolumeFileReport`].
     ExportVolume(ExportVolume),
     ImportVolume(ImportVolume),
+    UpgradeComponent(Box<UpgradeComponent>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1417,6 +1451,42 @@ mod tests {
         assert!(!format!("{d:?}").contains("ghp_pull"));
         let bytes = rmp_serde::to_vec_named(&d).unwrap();
         assert_eq!(rmp_serde::from_slice::<DeployCompose>(&bytes).unwrap(), d);
+    }
+
+    #[test]
+    fn an_upgrade_of_a_component_round_trips_without_its_password_in_debug() {
+        let upgrade = UpgradeComponent {
+            project: "deploy".into(),
+            workdir: "/opt/uirapuru/deploy".into(),
+            service: "backend".into(),
+            image: "ghcr.io/acme/uirapuru-backend:0.3.0".into(),
+            swap: ComponentSwap::Overlap {
+                ready_port: 9799,
+                ready_path: "/ready".into(),
+                ready_within_secs: 180,
+            },
+            registry_login: Some(RegistryLogin {
+                server: "ghcr.io".into(),
+                username: "acme".into(),
+                password: RegistrySecret::new("ghp_pull"),
+            }),
+        };
+        assert!(!format!("{upgrade:?}").contains("ghp_pull"));
+        let bytes = rmp_serde::to_vec_named(&upgrade).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<UpgradeComponent>(&bytes).unwrap(),
+            upgrade
+        );
+        let me = UpgradeComponent {
+            swap: ComponentSwap::SelfReplace,
+            registry_login: None,
+            ..upgrade
+        };
+        let bytes = rmp_serde::to_vec_named(&me).unwrap();
+        assert_eq!(
+            rmp_serde::from_slice::<UpgradeComponent>(&bytes).unwrap(),
+            me
+        );
     }
 
     #[test]
