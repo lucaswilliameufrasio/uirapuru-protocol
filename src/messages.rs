@@ -160,8 +160,9 @@ impl fmt::Debug for RegistrySecret {
 }
 
 /// Asks the agent to prove it can use a container registry: log in and push a
-/// tiny image, both with a throw-away Docker config so the daemon's own
-/// credentials are untouched. The answer is a [`RegistryProbeReport`].
+/// tiny image (or, for a registry only pulled from, read an image of it), with a
+/// throw-away Docker config so the daemon's own credentials are untouched. The
+/// answer is a [`RegistryProbeReport`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegistryProbe {
     /// Registry host, with the port when it is not the default (`ghcr.io`).
@@ -171,6 +172,14 @@ pub struct RegistryProbe {
     /// Path inside the registry the proof image goes under (`acme/uirapuru`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_prefix: Option<String>,
+    /// The registry is only pulled from (a token that cannot push): log in and read
+    /// `read_image` instead of pushing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pull_only: bool,
+    /// An image of the registry, with its tag, whose manifest the pull-only test reads
+    /// (`ghcr.io/acme/app:1.0`). Without one the test only logs in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_image: Option<String>,
 }
 
 /// What a [`RegistryProbe`] found.
@@ -178,6 +187,9 @@ pub struct RegistryProbe {
 pub struct RegistryProbeReport {
     pub logged_in: bool,
     pub pushed: bool,
+    /// Whether the pull-only test could read its image (absent when it did not try).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
     /// Why it stopped, when it did (the registry's own words, never the secret).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -1518,6 +1530,8 @@ mod tests {
             username: "acme".into(),
             password: RegistrySecret::new("ghp_example"),
             image_prefix: None,
+            pull_only: false,
+            read_image: None,
         };
         assert!(!format!("{probe:?}").contains("ghp_example"));
         assert_eq!(probe.password.expose(), "ghp_example");
@@ -1711,6 +1725,8 @@ mod tests {
                 username: "acme".into(),
                 password: RegistrySecret::new("ghp_example"),
                 image_prefix: Some("acme/uirapuru".into()),
+                pull_only: true,
+                read_image: Some("ghcr.io/acme/uirapuru/api:1.0".into()),
             }),
             CommandKind::BuildImage(Box::new(BuildImage {
                 release_id: id(),
